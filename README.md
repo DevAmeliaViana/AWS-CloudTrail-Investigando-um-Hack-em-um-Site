@@ -275,7 +275,7 @@ echo -e "\n${BLUE}=== FIM DA ANÁLISE ===${NC}"
 ========================================
 RELATÓRIO DE INCIDENTE DE SEGURANÇA
 Laboratório 187 - AWS CloudTrail Investigation
-Data do incidente: [INSERIR DATA]
+Data do incidente: 04/2026
 ========================================
 
 1. IDENTIFICAÇÃO DO HACKER
