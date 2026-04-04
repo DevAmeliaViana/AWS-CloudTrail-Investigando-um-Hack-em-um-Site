@@ -41,6 +41,8 @@ Este laboratório simula um cenário real onde o site do Café é hackeado logo 
 └── results/                  # Evidências encontradas (exemplo)
     └── hacker_info.txt
 
+-----
+
 🧪 Passo a Passo do Laboratório
 
 ✅ Pré-requisitos
