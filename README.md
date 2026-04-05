@@ -638,12 +638,8 @@ A combinação de AWS CloudTrail + Amazon Athena + análise manual em Linux CLI 
 
 **🔗 Este repositório serve como documentação para fins educacionais e de treinamento em segurança AWS.**
 ```
-
-## 🧑‍💻 Autora
-
-**Amelia Viana**  
+ 
 Laboratório original da AWS Academy.  
-Este README foi preparado para fins de documentação e portfólio no GitHub.
 
 ---
 
