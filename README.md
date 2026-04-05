@@ -1,6 +1,18 @@
 # AWS-CloudTrail-Investigando-um-Hack-em-um-Site
 
-Este laboratório simula um cenário real onde o site do Café é hackeado logo após a ativação de uma trilha do **AWS CloudTrail**. O objetivo é investigar a origem do ataque, identificar o responsável e aplicar medidas corretivas e de segurança.
+Este repositório documenta minha conclusão do **Laboratório AWS 187** - um cenário realístico de resposta a incidentes onde um site de cafeteria foi hackeado. O objetivo foi investigar, identificar o invasor e remediar todas as vulnerabilidades exploradas.
+
+## 🎯 Objetivos Alcançados
+
+- ✅ Configurar trilha do AWS CloudTrail para auditoria
+- ✅ Analisar logs JSON brutos com ferramentas Linux
+- ✅ Identificar o hacker via IP de origem e eventos da AWS
+- ✅ Remover usuários maliciosos do sistema (IAM e SO)
+- ✅ Corrigir configurações inseguras de SSH
+- ✅ Restaurar aplicação web comprometida
+- ✅ Utilizar Amazon Athena para consultas SQL em logs
+
+---
 
 ### 🎯 O que você vai aprender
 
@@ -9,14 +21,6 @@ Este laboratório simula um cenário real onde o site do Café é hackeado logo 
   - Utilitário Linux `grep`
   - AWS CLI
   - Amazon Athena (consultas SQL)
-- Identificar ações suspeitas em grupos de segurança EC2
-- Remover acesso de usuários maliciosos (SO e IAM)
-- Corrigir configurações de segurança (SSH) e restaurar o site
-
-### 🎯 Objetivos
-
-- Criar e configurar uma trilha no AWS CloudTrail
-- Analisar logs do CloudTrail usando `grep`, AWS CLI e Amazon Athena
 - Identificar ações suspeitas em grupos de segurança EC2
 - Remover acesso de usuários maliciosos (SO e IAM)
 - Corrigir configurações de segurança (SSH) e restaurar o site
@@ -33,302 +37,607 @@ Este laboratório simula um cenário real onde o site do Café é hackeado logo 
 - Acesso SSH à instância EC2 (via PuTTY no Windows ou terminal no macOS/Linux)
 
 ---
+## 📝 PASSO A PASSO COMPLETO DO LABORATÓRIO
 
-## 🧪 Passo a Passo do Laboratório
+### Tarefa 1: Modificando um grupo de segurança e observando o site
 
-### 🔹 Tarefa 1 – Configuração inicial e observação do site
-
-1. Acesse o console EC2 e localize a instância **Café Web Server**.
-2. No grupo de segurança associado, adicione uma regra de entrada para **SSH (porta 22)** restrita ao seu IP (`Meu IP`).
-3. Acesse o site via navegador:  
-   `http://<IP_PUBLICO_DA_INSTANCIA>/cafe/`  
-   O site aparece normal.
-
-### 🔹 Tarefa 2 – Criar trilha no CloudTrail e detectar o hack
-
-1. No serviço **CloudTrail**, crie uma trilha chamada `monitor`.
-2. Crie um bucket S3 novo com nome `monitoring####` (#### = 4 dígitos aleatórios).
-3. Após alguns minutos, atualize o site → ele foi hackeado (imagem alterada).
-4. No grupo de segurança, uma nova regra SSH `0.0.0.0/0` aparece (brecha criada pelo hacker).
-
-### 🔹 Tarefa 3 – Análise com `grep` e AWS CLI
-
-#### Conectar via SSH à instância EC2
-
+**1.1 Acessar o Console AWS e navegar para EC2**
 ```bash
-ssh -i labsuser.pem ec2-user@<IP_PUBLICO>
+Services → Compute → EC2
 ```
 
-#### Baixar e extrair logs do CloudTrail
+**1.2 Localizar a instância Café Web Server**
+- Escolha **Instances**
+- Localize e selecione **Café Web Server (WebSecurityGroup)**
+
+**1.3 Verificar regras de segurança existentes**
+- Clique na guia **Security**
+- Observe o grupo de segurança **sg-xxxxxxxxxx**
+- Na guia **Inbound rules**, note que apenas HTTP (porta 80) está liberado
+
+**1.4 Adicionar regra SSH para seu IP**
+```bash
+# Clique em Edit inbound rules
+# Add rule com as configurações:
+Type: SSH
+Port Range: 22
+Source: My IP  # (seu IP específico com /32)
+# Save rules
+```
+
+**1.5 Verificar o site normal**
+```bash
+# Copie o Public IPv4 address da instância
+# No navegador, acesse:
+http://<WebServerIP>/cafe/
+# O site deve aparecer normal (fotos de cafeteria)
+```
+
+---
+
+### Tarefa 2: Criando um log do CloudTrail e observando o site hackeado
+
+**2.1 Criar trilha do CloudTrail**
+```bash
+Services → Management & Governance → CloudTrail
+# No menu esquerdo: Trails
+# Clique em Create trail
+```
+
+**Configurações da trilha:**
+| Campo | Valor |
+|-------|-------|
+| Trail name | `monitor` |
+| Storage location | Create a new S3 bucket |
+| Trail log bucket | `monitoring####` (4 dígitos aleatórios) |
+| AWS KMS alias | `iniciais-KMS` (ex: kc-KMS) |
 
 ```bash
-mkdir ctraillogs && cd ctraillogs
+# Clique em Next (2x) e Create trail
+```
+
+**2.2 Observar o site hackeado**
+```bash
+# Volte ao navegador com o site do Café
+# Pressione Shift + F5 (refresh forçado)
+# Aguarde 1-2 minutos
+# O site agora mostra imagem hackeada!
+```
+
+**2.3 Verificar a brecha de segurança**
+```bash
+# No Console EC2, vá em Security Groups
+# Selecione o grupo de segurança da instância
+# Inbound rules - observe a nova regra:
+Type: SSH, Source: 0.0.0.0/0  # ALERTA! Porta aberta para o mundo!
+```
+
+---
+
+### Tarefa 3: Analisando os logs do CloudTrail usando grep
+
+**3.1 Conectar à instância via SSH**
+
+*Para macOS/Linux:*
+```bash
+cd ~/Downloads
+chmod 400 labsuser.pem
+ssh -i labsuser.pem ec2-user@<public-ip>
+```
+
+*Para Windows (PuTTY):*
+- Use o arquivo labsuser.ppk
+- Host: <public-ip>
+- Port: 22
+
+**3.2 Baixar e extrair os logs**
+```bash
+# Criar diretório para logs
+mkdir ctraillogs
+cd ctraillogs
+
+# Listar buckets S3
 aws s3 ls
-aws s3 cp s3://monitoring####/ . --recursive
-gunzip *.gz
+# Saída esperada:
+# 2026-04-05 15:09:31 cafeimagefiles74733
+# 2026-04-05 15:14:38 monitoring-4920
+
+# Baixar logs do CloudTrail
+aws s3 cp s3://monitoring-4920/ . --recursive
+
+# Navegar até os logs
+cd /home/ec2-user/ctraillogs/AWSLogs/429022785342/CloudTrail/
+
+# Descompactar todos os arquivos .gz
+find . -name "*.gz" -type f -exec gunzip {} \;
+
+# Verificar arquivos JSON extraídos
+find . -name "*.json" -type f
 ```
 
-#### Usar `grep` para inspecionar logs
-
+**3.3 Analisar a estrutura dos logs**
 ```bash
-# Ver sourceIPAddress
-for i in $(ls); do echo $i && cat $i | python -m json.tool | grep sourceIPAddress; done
+# Ver um arquivo de log (sem formatação)
+cat ./us-west-2/2026/04/05/*.json | head -50
 
-# Ver eventName
-for i in $(ls); do echo $i && cat $i | python -m json.tool | grep eventName; done
+# Ver com formatação JSON legível
+cat ./us-west-2/2026/04/05/*.json | python -m json.tool | head -100
 ```
 
-#### Usar AWS CLI para lookup events
-
+**3.4 Identificar IPs de origem**
 ```bash
-aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=ConsoleLogin
-
-# Buscar ações em grupos de segurança
-aws cloudtrail lookup-events --lookup-attributes AttributeKey=ResourceType,AttributeValue=AWS::EC2::SecurityGroup --output text
-
-# Filtrar pelo ID do grupo de segurança
-region=$(curl http://169.254.169.254/latest/dynamic/instance-identity/document | grep region | cut -d '"' -f4)
-sgId=$(aws ec2 describe-instances --filters "Name=tag:Name,Values='Cafe Web Server'" --query 'Reservations[*].Instances[*].SecurityGroups[*].[GroupId]' --region $region --output text)
-aws cloudtrail lookup-events --lookup-attributes AttributeKey=ResourceType,AttributeValue=AWS::EC2::SecurityGroup --region $region --output text | grep $sgId
+# Loop para extrair todos os sourceIPAddress
+for i in $(find . -name "*.json" -type f); do 
+    echo "=== $i ===" 
+    cat $i | python -m json.tool | grep sourceIPAddress 
+done
 ```
 
-### 🔹 Tarefa 4 – Análise com Amazon Athena
+**Saída esperada (mostrando IP suspeito):**
+```json
+"sourceIPAddress": "191.241.157.79",  ← IP do hacker!
+"sourceIPAddress": "54.218.74.146",   ← IP do servidor web
+```
 
-1. No console do CloudTrail, vá em **Event history** → **Create Athena table**.
-2. Escolha o bucket S3 `monitoring####` e crie a tabela.
-3. No Athena Query Editor, configure o local de resultados:  
-   `s3://monitoring####/results/`
-4. Execute as consultas SQL para identificar o hacker.
+**3.5 Encontrar eventos de Security Group**
+```bash
+# Buscar atividades relacionadas a security groups
+for i in $(find . -name "*.json" -type f); do 
+    if cat $i | grep -q "SecurityGroup"; then
+        echo "=== ATIVIDADE EM: $i ==="
+        cat $i | python -m json.tool | grep -E "(eventName|sourceIPAddress|userName)" | head -20
+    fi
+done
+```
 
-#### Consulta inicial
+**3.6 Extrair o evento de hack específico**
+```bash
+# Visualizar o AuthorizeSecurityGroupIngress completo
+cat ./us-west-2/2026/04/05/*B5VHzom21nKE4z9u.json | python -m json.tool | grep -A 30 "AuthorizeSecurityGroupIngress"
+```
+
+**Resultado encontrado:**
+```json
+{
+    "eventName": "AuthorizeSecurityGroupIngress",
+    "eventTime": "2026-04-05T15:15:47Z",
+    "sourceIPAddress": "191.241.157.79",
+    "requestParameters": {
+        "ipPermissions": {
+            "items": [{
+                "fromPort": 22,
+                "ipProtocol": "tcp",
+                "ipRanges": {
+                    "items": [{"cidrIp": "0.0.0.0/0"}]
+                },
+                "toPort": 22
+            }]
+        }
+    }
+}
+```
+
+---
+
+### Tarefa 4: Analisando os logs do CloudTrail usando o Amazon Athena
+
+**4.1 Criar tabela no Athena**
+```bash
+Services → CloudTrail → Event history
+# Clique em "Create Athena table"
+# Storage location: selecione s3://monitoring-4920/
+# Clique em "Create table"
+```
+
+**4.2 Configurar local dos resultados**
+```bash
+Services → Analytics → Athena
+# Settings → Manage
+# Location of query result: s3://monitoring-4920/results/
+# Save
+```
+
+**4.3 Consultas SQL para investigação**
 
 ```sql
-SELECT useridentity.userName, eventtime, eventsource, eventname, requestparameters
-FROM cloudtrail_logs_monitoring####
-LIMIT 30;
-```
+-- Consulta 1: Verificar estrutura da tabela
+SELECT * 
+FROM cloudtrail_logs_monitoring_4920 
+LIMIT 5;
 
-#### Consulta para identificar o hacker
+-- Consulta 2: Listar todos os usuários ativos
+SELECT DISTINCT useridentity.username 
+FROM cloudtrail_logs_monitoring_4920;
 
-```sql
-SELECT DISTINCT useridentity.userName, eventName, eventSource
-FROM cloudtrail_logs_monitoring####
-WHERE from_iso8601_timestamp(eventtime) > date_add('day', -1, now())
+-- Consulta 3: Buscar eventos de security group
+SELECT useridentity.username, eventtime, eventname, sourceipaddress
+FROM cloudtrail_logs_monitoring_4920
+WHERE eventname LIKE '%SecurityGroup%'
+ORDER BY eventtime DESC;
+
+-- Consulta 4: Localizar o hack (CRÍTICA)
+SELECT useridentity.username, eventtime, sourceipaddress, requestparameters
+FROM cloudtrail_logs_monitoring_4920
+WHERE eventname = 'AuthorizeSecurityGroupIngress';
+
+-- Consulta 5: Ver atividades do IP suspeito
+SELECT eventname, eventtime, useridentity.username
+FROM cloudtrail_logs_monitoring_4920
+WHERE sourceipaddress = '191.241.157.79'
+ORDER BY eventtime;
+
+-- Consulta 6: Resumo do último dia
+SELECT DISTINCT useridentity.userName, eventName, eventSource 
+FROM cloudtrail_logs_monitoring_4920 
+WHERE from_iso8601_timestamp(eventtime) > date_add('day', -1, now()) 
 ORDER BY eventSource;
 ```
 
-### ✅ O que você deve encontrar
-
-| Campo | Valor |
-|-------|-------|
-| Nome do usuário IAM | `chaos` |
-| Ação | `AuthorizeSecurityGroupIngress` |
-| Origem | Acesso programático (AWS CLI) |
-| Porta aberta | 22 (SSH) para `0.0.0.0/0` |
-
-### 🔹 Tarefa 5 – Correções e remediação
-
-#### 5.1 Remover usuário malicioso do SO
-
-```bash
-sudo aureport --auth          # ver logins recentes
-who                           # ver usuários logados
-sudo userdel -r chaos-user    # remover usuário (falha se logado)
-sudo kill -9 <PID>            # matar processo do chaos-user
-sudo userdel -r chaos-user    # agora funciona
-```
-
-#### 5.2 Ajustar configuração SSH
-
-```bash
-sudo vi /etc/ssh/sshd_config
-# Comentar: PasswordAuthentication yes
-# Descomentar: PasswordAuthentication no
-sudo service sshd restart
-```
-
-#### 5.3 Remover regra SSH aberta no grupo de segurança
-
-- Console EC2 → Security Groups → editar regras de entrada
-- Remover a regra `0.0.0.0/0` para porta 22
-
-#### 5.4 Restaurar o site
-
-```bash
-cd /var/www/html/cafe/images/
-sudo mv Coffee-and-Pastries.backup Coffee-and-Pastries.jpg
-```
-
-#### 5.5 Excluir usuário `chaos` do IAM
-
-- Console IAM → Users → selecionar `chaos` → Delete
-
----
-
-## 📊 Evidências coletadas (exemplo)
-
-| Campo | Valor encontrado |
-|-------|------------------|
-| Nome do usuário IAM | chaos |
-| Ação executada | AuthorizeSecurityGroupIngress |
-| IP de origem | 203.0.113.45 (exemplo) |
-| Método | Programático (AWS CLI) |
-| Porta aberta | 22 (SSH) para 0.0.0.0/0 |
-
----
-
-## 📁 Estrutura do Repositório
-
-```bash
-📂 aws-cloudtrail-investigation-lab/
-├── README.md
-├── queries/
-│   └── hacker_identification.sql
-├── scripts/
-│   └── grep_analysis.sh
-└── results/
-    └── hacker_info.txt
-```
-
----
-
-## 📄 Arquivos Complementares
-
-### `queries/hacker_identification.sql`
-
+**4.4 Resultados do desafio**
 ```sql
--- =====================================================
--- CONSULTAS PARA IDENTIFICAR O HACKER NO LABORATÓRIO 187
--- =====================================================
-
--- 1. VISUALIZAR ESTRUTURA DA TABELA
-SELECT * FROM cloudtrail_logs_monitoring#### LIMIT 5;
-
--- 2. AÇÕES DO EC2
-SELECT useridentity.userName, eventtime, eventname, requestparameters
-FROM cloudtrail_logs_monitoring####
-WHERE eventsource = 'ec2.amazonaws.com'
-LIMIT 50;
-
--- 3. AÇÕES DE SEGURANÇA
-SELECT useridentity.userName, eventtime, eventname, sourceipaddress
-FROM cloudtrail_logs_monitoring####
-WHERE eventname LIKE '%Security%'
-ORDER BY eventtime DESC;
-
--- 4. IDENTIFICAR O HACK (AÇÃO SUSPEITA)
-SELECT useridentity.userName, eventtime, sourceipaddress, requestparameters
-FROM cloudtrail_logs_monitoring####
+-- Identificar o hacker
+SELECT useridentity.username, eventtime, sourceipaddress, useragent
+FROM cloudtrail_logs_monitoring_4920
 WHERE eventname = 'AuthorizeSecurityGroupIngress';
-
--- 5. USUÁRIOS ATIVOS NAS ÚLTIMAS 24H
-SELECT DISTINCT useridentity.userName, eventName
-FROM cloudtrail_logs_monitoring####
-WHERE from_iso8601_timestamp(eventtime) > date_add('day', -1, now());
-
--- 6. ANÁLISE DETALHADA DO USUÁRIO 'chaos'
-SELECT eventtime, eventname, sourceipaddress, useragent
-FROM cloudtrail_logs_monitoring####
-WHERE useridentity.userName = 'chaos'
-ORDER BY eventtime;
 ```
 
-### `scripts/grep_analysis.sh`
+| Informação | Valor |
+|------------|-------|
+| Nome do usuário | `voclabs` |
+| Hora do ataque | `2026-04-05T15:15:47Z` |
+| IP de origem | `191.241.157.79` |
+| Método | Programático (AWS CLI) |
+
+---
+
+### Tarefa 5: Analisando o hack mais a fundo e melhorando a segurança
+
+**5.1 Verificar usuários do sistema operacional**
+```bash
+# Ver quem está logado
+who
+
+# Ver histórico de autenticação
+sudo aureport --auth
+
+# Listar todos os usuários com shell
+cat /etc/passwd | grep -v nologin
+
+# Verificar se chaos-user existe
+id chaos-user
+```
+
+**Saída esperada:**
+```
+uid=1001(chaos-user) gid=1001(chaos-user) grupos=1001(chaos-user)
+CHAOS USER EXISTE
+```
+
+**5.2 Remover o usuário chaos-user**
+```bash
+# Tentar remover (pode falhar se estiver logado)
+sudo userdel -r chaos-user
+
+# Se falhar, encontrar o processo e matar
+ps aux | grep chaos-user
+sudo kill -9 <PID>
+
+# Tentar remover novamente
+sudo userdel -r chaos-user
+
+# Verificar remoção
+id chaos-user
+# Saída: id: ‘chaos-user’: no such user
+```
+
+**5.3 Corrigir configuração do SSH**
 
 ```bash
-#!/bin/bash
-# Script para análise de logs do CloudTrail com grep
+# Verificar configuração atual
+sudo grep PasswordAuthentication /etc/ssh/sshd_config
+# Saída: PasswordAuthentication yes  ← PROBLEMA!
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# Fazer backup
+sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup.$(date +%Y%m%d)
 
-echo -e "${BLUE}=== ANÁLISE DE LOGS DO CLOUDTRAIL ===${NC}\n"
-
-cd ctraillogs 2>/dev/null || { echo -e "${RED}ERRO: Diretório ctraillogs não encontrado${NC}"; exit 1; }
-
-echo -e "${GREEN}[1] Extraindo arquivos...${NC}"
-gunzip -f *.gz 2>/dev/null
-
-echo -e "${GREEN}[2] Buscando AuthorizeSecurityGroupIngress...${NC}"
-for i in $(ls *.json 2>/dev/null); do
-    result=$(cat $i | python -m json.tool 2>/dev/null | grep -A20 "AuthorizeSecurityGroupIngress")
-    if [ ! -z "$result" ]; then
-        echo -e "${RED}>>> ENCONTRADO EM: $i${NC}"
-        echo "$result" | grep -E "userName|sourceIPAddress|eventTime"
-    fi
-done
-
-echo -e "${GREEN}[3] Buscando atividades do usuário chaos...${NC}"
-for i in $(ls *.json 2>/dev/null); do
-    cat $i | python -m json.tool 2>/dev/null | grep -A30 '"userName": "chaos"'
-done
-
-echo -e "\n${BLUE}=== FIM DA ANÁLISE ===${NC}"
+# Editar configuração
+sudo vi /etc/ssh/sshd_config
 ```
 
-### `results/hacker_info.txt`
+**Dentro do VI:**
+```bash
+:set number              # Mostrar números das linhas
+# Navegar até linha 61 (PasswordAuthentication yes)
+# Pressionar 'a' para editar
+# Adicionar '#' no início da linha → #PasswordAuthentication yes
+# Navegar até linha 63 (#PasswordAuthentication no)
+# Remover o '#' → PasswordAuthentication no
+# Pressionar Esc
+:wq                      # Salvar e sair
+```
 
-```text
-========================================
-RELATÓRIO DE INCIDENTE DE SEGURANÇA
-Laboratório 187 - AWS CloudTrail Investigation
-Data do incidente: 04/2026
-========================================
+```bash
+# Reiniciar serviço SSH
+sudo service sshd restart
 
-1. IDENTIFICAÇÃO DO HACKER
---------------------------
-Nome do usuário IAM: chaos
-Método de acesso: Programático (AWS CLI)
+# Verificar alteração
+sudo grep PasswordAuthentication /etc/ssh/sshd_config
+# Saída esperada: PasswordAuthentication no
+```
 
-2. AÇÃO MALICIOSA
-----------------
-Event Name: AuthorizeSecurityGroupIngress
-Porta: 22 (SSH)
-Origem: 0.0.0.0/0
+**5.4 Restaurar a imagem do site**
 
-3. DETALHES DO ATAQUE
---------------------
-Horário exato: [INSERIR HORÁRIO]
-IP de origem: [INSERIR IP]
-User Agent: [INSERIR USER AGENT]
+```bash
+# Navegar para diretório das imagens
+cd /var/www/html/cafe/images/
 
-4. AÇÕES CORRETIVAS
-------------------
-✅ Usuário chaos removido do IAM
-✅ Usuário chaos removido do SO
-✅ Regra SSH 0.0.0.0/0 removida
-✅ Autenticação por senha desabilitada no SSH
-✅ Site restaurado
+# Listar arquivos
+ls -la Coffee-and-Pastries*
 
-========================================
-Documentado por: amelia viana
-Data: 04/2026
-========================================
+# Saída esperada:
+# -rwxrwxrwx 1 chaos-user root 486325 Coffee-and-Pastries.backup
+# -rw-r--r-- 1 chaos-user root 260603 Coffee-and-Pastries.jpg (hackeada)
+
+# Restaurar backup
+sudo mv Coffee-and-Pastries.backup Coffee-and-Pastries.jpg
+
+# Corrigir permissões
+sudo chown apache:apache Coffee-and-Pastries.jpg
+sudo chmod 644 Coffee-and-Pastries.jpg
+
+# Verificar restauração
+ls -la Coffee-and-Pastries.jpg
+file Coffee-and-Pastries.jpg
+```
+
+**5.5 Corrigir Security Group no Console AWS**
+
+```bash
+# No Console AWS:
+Services → EC2 → Security Groups
+# Selecione o grupo de segurança da instância
+# Inbound rules → Edit inbound rules
+```
+
+**Regras finais (CORRETAS):**
+| Type | Port | Source |
+|------|------|--------|
+| HTTP | 80 | 0.0.0.0/0 |
+| SSH | 22 | SEU_IP/32 (NÃO 0.0.0.0/0!) |
+
+```bash
+# DELETE a regra maliciosa:
+Type: SSH, Source: 0.0.0.0/0  # ← REMOVER!
+
+# Save rules
+```
+
+**5.6 Remover usuário IAM hacker**
+```bash
+# No Console AWS:
+Services → IAM → Users
+# Localize o usuário 'chaos' ou 'voclabs'
+# Selecione → Delete
+# Confirme o nome → Delete
+```
+
+**5.7 Verificar site restaurado**
+
+```bash
+# Testar localmente
+curl -I http://localhost/cafe/
+# HTTP/1.1 200 OK
+
+# No navegador, acesse:
+http://54.218.74.146/cafe/
+# Pressione Ctrl+Shift+R (refresh forçado)
+# A imagem deve estar NORMAL (cafeteria, não imagem hackeada)
+```
+
+**5.8 Validar segurança do SSH**
+
+```bash
+# Tentar conectar de outro terminal (deve falhar)
+ssh -i labsuser.pem ec2-user@54.218.74.146
+# Saída: ssh: connect to host 54.218.74.146 port 22: Connection refused
+
+# Isso é BOM! Significa que o SSH está seguro!
 ```
 
 ---
 
-## 🧠 Conceitos aplicados
+## 📊 EVIDÊNCIAS DO INVASOR
 
-- **CloudTrail**: auditoria de ações na AWS
-- **Amazon Athena**: consultas SQL em logs no S3
-- **AWS CLI**: busca programática por eventos
-- **Grupos de segurança**: controle de tráfego de rede
-- **Hardening de SSH**: desabilitar autenticação por senha
-- **Resposta a incidentes**: remoção de usuário e reversão de alterações
+| Informação | Valor |
+|------------|-------|
+| **IP de origem** | `191.241.157.79` |
+| **Usuário IAM** | `voclabs` |
+| **Usuário Linux** | `chaos-user` (UID 1001) |
+| **Ação maliciosa** | `AuthorizeSecurityGroupIngress` |
+| **Horário do ataque** | `2026-04-05T15:15:47Z` |
+| **Regra adicionada** | SSH (tcp/22) para `0.0.0.0/0` |
+| **Método de acesso** | Programático (AWS CLI) |
+| **Arquivo do log** | `*B5VHzom21nKE4z9u.json` |
+
+---
+
+## 🛠️ COMANDOS ÚTEIS PARA RESPOSTA A INCIDENTES
+
+### Análise de Logs
+```bash
+# Buscar eventos específicos em múltiplos arquivos
+grep -r "AuthorizeSecurityGroupIngress" .
+
+# Extrair todos os IPs de origem
+find . -name "*.json" -exec grep -h "sourceIPAddress" {} \; | sort | uniq
+
+# Formatar JSON para leitura
+cat log.json | python -m json.tool | less
+
+# Buscar por usuário específico
+grep -r '"userName": "chaos"' .
+
+# Contar ocorrências por evento
+grep -r '"eventName"' . | cut -d'"' -f4 | sort | uniq -c | sort -rn
+
+# Extrair timestamps de eventos suspeitos
+grep -r '"eventTime"' . | grep "15:15"
+```
+
+### Segurança do Sistema
+```bash
+# Verificar todos os usuários com shell
+cat /etc/passwd | grep -E "/(bash|sh)$" | cut -d: -f1
+
+# Verificar configuração SSH
+sudo sshd -T | grep -E "passwordauthentication|permitrootlogin"
+
+# Verificar portas abertas
+sudo netstat -tlnp | grep :22
+
+# Verificar processos suspeitos
+ps aux | grep -v "^root\|ec2-user" | grep -v "\["
+```
+
+### AWS CLI para Investigação
+```bash
+# Buscar eventos no CloudTrail via CLI
+aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=AuthorizeSecurityGroupIngress
+
+# Descrever security groups
+aws ec2 describe-security-groups --group-ids <sg-id>
+
+# Verificar instâncias
+aws ec2 describe-instances --filters "Name=tag:Name,Values='Cafe Web Server'"
+```
 
 ---
 
-## 📚 Referências úteis
+## 📁 ESTRUTURA DOS LOGS ANALISADOS
 
-- [Documentação do AWS CloudTrail](https://docs.aws.amazon.com/cloudtrail/)
-- [Consultando logs do CloudTrail com Athena](https://docs.aws.amazon.com/athena/latest/ug/cloudtrail-logs.html)
-- [Boas práticas para grupos de segurança EC2](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/security-group-rules-reference.html)
+```
+AWSLogs/
+└── 429022785342/
+    └── CloudTrail/
+        ├── us-east-1/
+        │   └── 2026/04/05/
+        │       ├── 429022785342_CloudTrail_us-east-1_20260405T1520Z_OeMXIlUAtN4VWPTN.json
+        │       └── 429022785342_CloudTrail_us-east-1_20260405T1520Z_7wsxNlLD8X5dCRRS.json
+        └── us-west-2/
+            └── 2026/04/05/
+                ├── 429022785342_CloudTrail_us-west-2_20260405T1515Z_KBJr9glEK7U0mulB.json
+                └── 429022785342_CloudTrail_us-west-2_20260405T1520Z_B5VHzom21nKE4z9u.json  ← Evento do hacker!
+```
 
 ---
+
+## 📈 IMPACTO DAS MEDIDAS DE SEGURANÇA
+
+| Métrica | Antes | Depois |
+|---------|-------|--------|
+| **Superfície de ataque SSH** | 🌍 Global (0.0.0.0/0) | 🏠 Apenas IP autorizado |
+| **Autenticação SSH** | 🔑 Senha + Chave | 🔐 Apenas chave |
+| **Usuários com acesso** | 3 (root, ec2-user, chaos-user) | 2 (root, ec2-user) |
+| **Integridade do site** | ❌ Comprometida | ✅ Restaurada |
+| **Arquivo de imagem** | 260KB (hackeado) | 486KB (original) |
+
+---
+
+## 🎓 PRINCIPAIS APRENDIZADOS
+
+1. **CloudTrail é fundamental** - Sem logs, não há como investigar incidentes
+2. **Logs estruturados salvam vidas** - JSON + Athena = investigação eficiente
+3. **Nunca abra SSH para 0.0.0.0/0** - Use grupos de segurança restritivos
+4. **PasswordAuthentication no** - Sempre use chaves SSH
+5. **Auditoria contínua** - Monitore eventos como `AuthorizeSecurityGroupIngress`
+6. **Princípio do menor privilégio** - Limite permissões IAM rigorosamente
+7. **Documentação do incidente** - Registre cada passo da investigação
+8. **Backups são essenciais** - O arquivo `.backup` salvou o site!
+
+---
+
+## 🛠️ TECNOLOGIAS UTILIZADAS
+
+| Serviço/Ferramenta | Finalidade |
+|-------------------|------------|
+| **AWS CloudTrail** | Auditoria de ações da conta |
+| **Amazon Athena** | Consultas SQL em logs |
+| **Amazon EC2** | Servidor web comprometido |
+| **AWS IAM** | Gerenciamento de usuários |
+| **Amazon S3** | Armazenamento de logs |
+| **Linux CLI** | Análise de logs (grep, sed, awk) |
+| **Python** | Formatação JSON (`json.tool`) |
+| **SSH** | Acesso remoto seguro |
+| **VI Editor** | Edição de configurações |
+
+---
+
+## ✅ LISTA DE VERIFICAÇÃO FINAL
+
+| Tarefa | Status | Comando de Verificação |
+|--------|--------|----------------------|
+| Tarefa 1 | ✅ | Regra SSH adicionada com My IP |
+| Tarefa 2 | ✅ | CloudTrail "monitor" criado |
+| Tarefa 3 | ✅ | Logs baixados e analisados |
+| Tarefa 4 | ✅ | Hacker identificado via Athena |
+| Tarefa 5.1 | ✅ | `id chaos-user` → no such user |
+| Tarefa 5.2 | ✅ | `grep PasswordAuthentication` → no |
+| Tarefa 5.3 | ✅ | `curl -I` → HTTP 200 |
+| Tarefa 5.4 | ✅ | Security group sem 0.0.0.0/0 para SSH |
+
+---
+
+## 🏁 CONCLUSÃO
+
+O laboratório demonstrou a importância de:
+- **Proatividade** na configuração de auditoria (CloudTrail)
+- **Capacidade de investigação** com ferramentas apropriadas
+- **Resposta rápida** a incidentes de segurança
+- **Documentação** de todo o processo forense
+
+A combinação de AWS CloudTrail + Amazon Athena + análise manual em Linux CLI provou ser extremamente eficaz para identificar e responder a um ataque realístico.
+
+---
+
+## 📚 REFERÊNCIAS
+
+- [AWS CloudTrail Documentation](https://docs.aws.amazon.com/cloudtrail/)
+- [Amazon Athena Documentation](https://docs.aws.amazon.com/athena/)
+- [AWS Security Best Practices](https://docs.aws.amazon.com/security/)
+- [EC2 Security Groups Guide](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html)
+
+---
+
+## 📝 NOTAS FINAIS
+
+**Status:** ✅ Laboratório Concluído com Sucesso  
+**Data:** 2026-04-05  
+**Duração:** ~75 minutos  
+**Nível:** Intermediário  
+**Ambiente:** Amazon Linux 2
+
+---
+
+*"Security is not a product, it's a process." - Bruce Schneier*
+
+🔐 **Mantenha-se seguro na nuvem!**
+
+---
+
+## 📂 ARQUIVOS CRIADOS DURANTE O LAB
+
+```bash
+/home/ec2-user/ctraillogs/                          # Logs do CloudTrail
+/home/ec2-user/respostas_desafio.txt                # Respostas do desafio
+/etc/ssh/sshd_config.backup.20260405                # Backup SSH
+/var/log/security_investigation.log                 # Relatório de segurança
+/var/log/lab187-conclusao.txt                       # Conclusão do lab
+```
+
+---
+
+**🔗 Este repositório serve como documentação para fins educacionais e de treinamento em segurança AWS.**
+```
 
 ## 🧑‍💻 Autora
 
